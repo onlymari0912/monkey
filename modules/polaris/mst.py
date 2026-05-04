@@ -5,6 +5,34 @@ import time
 router = APIRouter(prefix="/polaris/mst", tags=["mst"])
 router.model_whitelist = ["LAV", "XIF"]
 
+SHOP_TEST_EVENT_IDS = (
+    "shop.00000",
+    "shop.00001",
+    "shop.00002",
+    "shop.00003",
+    "shop.00004",
+    "shop.00005",
+    "shop.00006",
+    "shop.00007",
+    "shop.00008",
+    "shop.00009",
+    "shop.00010",
+    "shop.00011",
+    "shop.00012",
+    "shop.20001",
+)
+
+def _build_shop_test_event_nodes():
+    return [
+        E.event_item(
+            E.id(event_id, __type="str"),
+            E.param("", __type="str"),
+            E.open_at("2026-01-01 00:00:00", __type="str"),
+            E.close_at("2040-12-31 14:59:59", __type="str"),
+        )
+        for event_id in SHOP_TEST_EVENT_IDS
+    ]
+
 @router.post("")
 @router.post("/")
 @router.post("/{path:path}")
@@ -44,7 +72,7 @@ async def polaris_mst_get_common(request: Request):
                 ]
             ),
             E.mst_demo(),
-            E.mst_event(),
+            E.mst_event(*_build_shop_test_event_nodes()),
             E.mst_patch(
                 E.version(0, __type="s32"),
                 E.patch("", __type="str")
