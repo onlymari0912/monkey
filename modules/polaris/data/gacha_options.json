@@ -1,0 +1,15 @@
+{
+  "pickup_rate_percent": 500,
+  "rarity_weights_by_category": {
+    "Contenter": {
+      "R": 81,
+      "SR": 15,
+      "SSR": 4
+    },
+    "Snapshot": {
+      "R": 50,
+      "SR": 30,
+      "SSR": 20
+    }
+  }
+}

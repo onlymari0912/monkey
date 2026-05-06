@@ -1,10 +1,8 @@
 from fastapi import APIRouter, Request, Response
 from core_common import core_process_request, core_prepare_response, E
-from core_database import get_db
-from datetime import datetime, timezone
+from modules.polaris import player
 from modules.polaris import usr as polaris_usr
 from pathlib import Path
-from tinydb import where
 import json
 import random
 import time
@@ -13,11 +11,15 @@ import uuid
 router = APIRouter(prefix="/polaris/gacha", tags=["gacha"])
 router.model_whitelist = ["LAV", "XIF"]
 
-CHARACTER_DATA_PATH = Path(__file__).resolve().parent / "data" / "character.json"
-GACHA_DATA_PATH = Path(__file__).resolve().parent / "data" / "gacha.json"
+DATA_DIR = Path(__file__).resolve().parent / "data"
+CHARACTER_DATA_PATH = DATA_DIR / "character.json"
+GACHA_OPTIONS_PATH = DATA_DIR / "gacha_options.json"
+GACHA_CONTENT_TYPE_FILES = (
+    ("Contenter", DATA_DIR / "gacha_contenter.json"),
+    ("Snapshot", DATA_DIR / "gacha_snapshot.json"),
+)
 
 GACHA_TRANSACTIONS = {}
-
 GACHA_RARITY_TYPES = {
     "N": 0,
     "R": 1,
@@ -29,6 +31,22 @@ GACHA_RESULT_RARITY_PARAMS = {
     "R": "2",
     "SR": "3",
     "SSR": "4",
+}
+
+# 클라이언트 DTO는 새로 추가하지 않고 기존 get_gacha_info.payment_type 필드를 사용한다.
+# JSON 설정: ["credit", "paseli", "item"] 문자열 배열
+# 클라이언트로 보낼 때 기존 GachaPaymentMethodFlags 비트마스크로 변환한다.
+# 0(fallback): 클라이언트 bundle 값
+# -1: 비활성
+# 2: Credit
+# 4: Paseli
+# 8: Item.
+GACHA_PAYMENT_TYPE_FALLBACK_TO_CLIENT = 0
+GACHA_PAYMENT_TYPE_NONE = -1
+GACHA_PAYMENT_TYPE_FLAGS = {
+    "credit": 2,
+    "paseli": 4,
+    "item": 8,
 }
 
 with CHARACTER_DATA_PATH.open("r", encoding="utf-8") as f:
@@ -45,12 +63,24 @@ CHARACTER_CARD_BY_ID = {
     if card.get("card_id")
 }
 
-with GACHA_DATA_PATH.open("r", encoding="utf-8") as f:
-    GACHA_DATA = json.load(f)
-GACHA_ENTRIES = tuple(GACHA_DATA["gachas"])
-GACHA_RARITY_WEIGHTS_BY_CATEGORY = GACHA_DATA["rarity_weights_by_category"]
-for entry in GACHA_ENTRIES:
-    rarity_weights = GACHA_RARITY_WEIGHTS_BY_CATEGORY[entry["category"]]
+def _load_json(path):
+    with path.open("r", encoding="utf-8") as f:
+        return json.load(f)
+
+def _load_gacha_entries():
+    entries = []
+    for category, path in GACHA_CONTENT_TYPE_FILES:
+        data = _load_json(path)
+        for entry in data or []:
+            if not isinstance(entry, dict):
+                continue
+            entries.append(dict(entry, category=category))
+    return tuple(entries)
+
+GACHA_OPTIONS = _load_json(GACHA_OPTIONS_PATH)
+GACHA_ENTRIES = _load_gacha_entries()
+GACHA_RARITY_WEIGHTS_BY_CATEGORY = GACHA_OPTIONS["rarity_weights_by_category"]
+for rarity_weights in GACHA_RARITY_WEIGHTS_BY_CATEGORY.values():
     for rarity in ("R", "SR", "SSR"):
         rarity_weights[rarity] = int(rarity_weights[rarity])
 GACHA_BY_ID = {
@@ -59,13 +89,35 @@ GACHA_BY_ID = {
     if str(entry.get("id", "")).isdigit()
 }
 DEFAULT_GACHA_ID = next(iter(GACHA_BY_ID), 0)
-GACHA_PICKUP_RATE_PERCENT = min(1000, max(0, int(GACHA_DATA["pickup_rate_percent"])))
+GACHA_PICKUP_RATE_PERCENT = min(1000, max(0, int(GACHA_OPTIONS["pickup_rate_percent"])))
 
 def _safe_int(value, default=0):
     try:
         return int(value)
     except Exception:
         return default
+
+def _get_consume_item(entry):
+    consume_item = entry.get("consume_item") or {}
+    if not isinstance(consume_item, dict):
+        return "", 0
+    return (
+        str(consume_item.get("id") or "").strip(),
+        max(0, _safe_int(consume_item.get("count"), 0)),
+    )
+
+def _get_gacha_payment_type(entry):
+    payment_type = entry.get("payment_type", "fallback")
+    if isinstance(payment_type, int):
+        return payment_type
+    if isinstance(payment_type, list):
+        flags = 0
+        for token in [str(value).strip().lower() for value in payment_type]:
+            if token in GACHA_PAYMENT_TYPE_FLAGS:
+                flags |= GACHA_PAYMENT_TYPE_FLAGS[token]
+        return flags
+    else:
+        return GACHA_PAYMENT_TYPE_FALLBACK_TO_CLIENT
 
 def draw_gacha_card(gacha_id):
     entry = GACHA_BY_ID.get(gacha_id)
@@ -114,24 +166,6 @@ def draw_gacha_card(gacha_id):
         )
     return random.choice(drawable_cards)
 
-def grant_gacha_card(profile, card_id):
-    if not profile:
-        return
-    profile.setdefault("character_cards", [])
-    profile["character_cards"].append({
-        "index": str(uuid.uuid4()),
-        "item_id": f"chara_card.{card_id}",
-        "card_limit_over_count": 0,
-        "character_card_exp": 0,
-        "character_card_skill_exp": 0,
-        "additional_skills": [],
-        "is_favorite": False,
-        "source": 0,
-        "created_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
-    })
-    get_db().table("polaris_profile").upsert(profile, where("usr_id") == profile["usr_id"])
-
-
 @router.post("")
 @router.post("/")
 @router.post("/{path:path}")
@@ -159,6 +193,7 @@ async def polaris_gacha_get_gacha_info(request: Request):
     gacha_nodes = []
     for entry in GACHA_ENTRIES:
         gacha_id = _safe_int(entry.get("id"))
+        consume_item_id, consume_item_count = _get_consume_item(entry)
         rarity_weights = GACHA_RARITY_WEIGHTS_BY_CATEGORY[entry["category"]]
         pickup_ids = set(entry.get("pickups", []))
         cards = [
@@ -181,14 +216,14 @@ async def polaris_gacha_get_gacha_info(request: Request):
             E.gacha(
                 E.gacha_id(gacha_id, __type="s32"),
                 E.name(f"{entry.get('category', 'Gacha')} Hunt {gacha_id}", __type="str"),
-                E.payment_type(0, __type="s32"),
+                E.payment_type(_get_gacha_payment_type(entry), __type="s32"),
                 E.prob_weight_r(_safe_int(rarity_weights.get("R"), 0), __type="s32"),
                 E.prob_weight_sr(_safe_int(rarity_weights.get("SR"), 0), __type="s32"),
                 E.prob_weight_ssr(_safe_int(rarity_weights.get("SSR"), 0), __type="s32"),
                 E.prob_weight_pickup(prob_weight_pickup, __type="s32"),
                 E.guarantee_serial_limit(0, __type="s32"),
-                E.gacha_consume_item_id(str(entry.get("consume_item_id") or "money.mira"), __type="str"),
-                E.gacha_consume_item_count(_safe_int(entry.get("consume_item_count"), 1000), __type="s32"),
+                E.gacha_consume_item_id(consume_item_id, __type="str"),
+                E.gacha_consume_item_count(consume_item_count, __type="s32"),
                 E.open_at("2026-01-01 00:00:00", __type="str"),
                 E.close_at("2040-12-31 14:59:59", __type="str"),
                 E.start_softcode("0000000000", __type="str"),
@@ -214,7 +249,11 @@ async def polaris_gacha_get_gacha_info(request: Request):
     return Response(content=response_body, headers=response_headers)
 
 async def polaris_gacha_begin_gacha(request: Request):
-    await core_process_request(request)
+    request_info = await core_process_request(request)
+    root = request_info["root"][0]
+    player_data = root.find("player_data")
+    if player_data is not None:
+        player.apply_uploaded_item_data(player_data)
     response = E.response(
         E.gacha(
             E.now_date(time.strftime("%Y-%m-%d %H:%M:%S"), __type="str"),
@@ -255,14 +294,47 @@ async def polaris_gacha_end_gacha(request: Request):
     gacha_id = GACHA_TRANSACTIONS.pop(transaction_id, DEFAULT_GACHA_ID)
     if gacha_id not in GACHA_BY_ID:
         gacha_id = DEFAULT_GACHA_ID
+    entry = GACHA_BY_ID[gacha_id]
+    profile = player.get_profile(usr_id=usr_id) if usr_id > 0 else None
+    required_item_id, required_count = _get_consume_item(entry)
+    if required_item_id and required_count > 0:
+        profile_items = profile.setdefault("items", {}) if profile else {}
+        if not isinstance(profile_items, dict):
+            profile_items = {}
+            profile["items"] = profile_items
+
+        profile_count = _safe_int(profile_items.get(required_item_id), 0)
+        short_balance = (
+            not profile
+            or profile_count < required_count
+        )
+        if short_balance:
+            response = E.response(
+                E.gacha(
+                    E.gacha_result(
+                        E.items(),
+                        E.item_counts(),
+                        E.item_params(),
+                        E.error(
+                            E.code(1, __type="s32"),
+                            E.message("Item short balance", __type="str")
+                        ),
+                    ),
+                    polaris_usr._build_profile_data_node(profile, E.player_data),
+                )
+            )
+            response_body, response_headers = await core_prepare_response(request, response)
+            return Response(content=response_body, headers=response_headers)
+
+        next_count = profile_count - required_count
+        if next_count > 0:
+            profile_items[required_item_id] = next_count
+        else:
+            profile_items.pop(required_item_id, None)
+
     card = draw_gacha_card(gacha_id)
     card_id = card["card_id"]
-    profile = (
-        get_db().table("polaris_profile").get(where("usr_id") == usr_id)
-        if usr_id > 0
-        else None
-    )
-    grant_gacha_card(profile, card_id)
+    player.grant_character_card(profile, card_id)
     response = E.response(
         E.gacha(
             E.gacha_result(

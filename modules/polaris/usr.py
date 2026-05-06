@@ -1,11 +1,11 @@
 from fastapi import APIRouter, Request, Response
+from datetime import datetime, timezone
 from core_common import core_process_request, core_prepare_response, E
 from core_database import get_db
-from datetime import datetime, timezone
+from modules.polaris import player
 from pathlib import Path
 from tinydb import where
 import json
-import random
 import time
 
 router = APIRouter(prefix="/polaris/usr", tags=["usr"])
@@ -40,21 +40,6 @@ async def polaris_usr_dispatch(request: Request):
         print(traceback.format_exc())
         return Response(status_code=500)
 
-def get_profile(dataid=None, refid=None):
-    db = get_db().table("polaris_profile")
-    dataid = str(dataid or "").strip()
-    refid = str(refid or "").strip()
-
-    if dataid:
-        p = db.get(where("card") == dataid)
-        if p: return p
-
-    if refid:
-        p = db.get(where("refid") == refid)
-        if p: return p
-
-    return None
-
 def _extract_usr_identity(root):
     dataid = ""
     refid = ""
@@ -80,50 +65,15 @@ def _extract_usr_identity(root):
     return dataid, refid, name, pin
 
 def _ensure_signup_profile(profile, dataid, refid, name, pin=""):
-    db = get_db().table("polaris_profile")
-    if not profile:
-        print("polaris_usr_sign_up: Creating NEW profile")
-        profile = {}
+    return player.ensure_signup_profile(profile, dataid, refid, name, pin)
 
-    profile["card"] = dataid
-    if refid:
-        profile["refid"] = refid
-    if pin and not profile.get("pin"):
-        profile["pin"] = pin
-    if not profile.get("name"):
-        profile["name"] = name or "PLAYER"
-
-    usr_id = _safe_int(profile.get("usr_id"), 0)
-    if usr_id <= 0:
-        existing_usr_ids = {
-            _safe_int(item.get("usr_id"), 0)
-            for item in db.all()
-        }
-        while True:
-            usr_id = random.randint(100000, 999999)
-            if usr_id not in existing_usr_ids:
-                break
-        profile["usr_id"] = usr_id
-
-    if not profile.get("crew_id"):
-        profile["crew_id"] = _generate_unique_crew_id(usr_id)
-    profile.setdefault("mira", 0)
-    profile.setdefault("items", {})
-    profile.setdefault("counts", {})
-    profile.setdefault("action_counts", {})
-    profile.setdefault("character_cards", [])
-    profile.setdefault("characters", [])
-    profile.setdefault("decks", [])
-
-    return profile
-
-def _safe_int(value, default=0):
+def safe_int(value, default=0):
     try:
         return int(value)
     except Exception:
         return default
 
-def _safe_bool(value):
+def safe_bool(value):
     if str(value).lower() == "true":
         return 1
     try:
@@ -131,42 +81,7 @@ def _safe_bool(value):
     except Exception:
         return 0
 
-def _append_unique_entries(entries, new_entries, key_name="uuid"):
-    seen = {
-        entry.get(key_name)
-        for entry in entries
-        if isinstance(entry, dict) and entry.get(key_name)
-    }
-    for entry in new_entries:
-        entry_key = entry.get(key_name)
-        if entry_key and entry_key in seen:
-            continue
-        entries.append(entry)
-        if entry_key:
-            seen.add(entry_key)
-
-def _generate_unique_crew_id(current_usr_id=None):
-    db = get_db().table("polaris_profile")
-    for _ in range(1024):
-        candidate = f"{random.randint(0, 99999999):08d}"
-        conflicts = db.search(where("crew_id") == candidate)
-        if not any(profile.get("usr_id") != current_usr_id for profile in conflicts):
-            return candidate
-    raise RuntimeError("Failed to allocate unique crew_id")
-
-def _normalize_usr_character_entry(entry):
-    if not isinstance(entry, dict):
-        return None
-    chara_id = str(entry.get("chara_id", "")).strip()
-    if not chara_id:
-        return None
-    return {
-        "chara_id": chara_id,
-        "closeness": _safe_int(entry.get("closeness", 0), 0),
-        "home_touch_count": _safe_int(entry.get("home_touch_count", 0), 0),
-    }
-
-def _now_date_string():
+def now_date_string():
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 async def polaris_usr_sign_up(request: Request):
@@ -181,13 +96,8 @@ async def polaris_usr_sign_up(request: Request):
 
         print(f"polaris_usr_sign_up: Processing signup for card='{dataid}' name='{name}'")
 
-        db = get_db().table("polaris_profile")
-        profile = _ensure_signup_profile(get_profile(dataid, refid), dataid, refid, name, pin)
-        profile_doc_id = getattr(profile, "doc_id", None)
-        if profile_doc_id is not None:
-            db.update(dict(profile), doc_ids=[profile_doc_id])
-        else:
-            db.upsert(profile, where("card") == dataid)
+        profile = _ensure_signup_profile(player.get_profile(dataid, refid), dataid, refid, name, pin)
+        player.save_profile(profile, fallback_card=dataid)
         print(f"polaris_usr_sign_up: Saved. usr_id={profile['usr_id']}")
 
         # Response (Matches SignUpModeler.cs)
@@ -201,7 +111,7 @@ async def polaris_usr_sign_up(request: Request):
         response_body, response_headers = await core_prepare_response(request, response)
         return Response(content=response_body, headers=response_headers)
 
-    except Exception as e:
+    except Exception:
         import traceback
         print(traceback.format_exc())
         return Response(status_code=500)
@@ -242,7 +152,7 @@ def _build_profile_data_node(p, node_factory=E.usr):
     items = p.get("items") or {}
     music_missions = p.get("music_missions") or []
     pa_skill_data = p.get("pa_skill") or {}
-    mira_balance = max(0, _safe_int(p["mira"], 0))
+    mira_balance = max(0, safe_int(p["mira"], 0))
     item_nodes = [
         E.item(
             E.item_id("money.mira", __type="str"),
@@ -254,7 +164,7 @@ def _build_profile_data_node(p, node_factory=E.usr):
     if isinstance(items, dict):
         for item_id, count in items.items():
             item_id = str(item_id or "").strip()
-            count = _safe_int(count, 0)
+            count = safe_int(count, 0)
             if not item_id or item_id == "money.mira" or count <= 0:
                 continue
             item_nodes.append(
@@ -312,25 +222,25 @@ def _build_profile_data_node(p, node_factory=E.usr):
     for mission in music_missions:
         if not isinstance(mission, dict):
             continue
-        chart_id = _safe_int(mission.get("chart_id", 0), 0)
+        chart_id = safe_int(mission.get("chart_id", 0), 0)
         if chart_id <= 0:
             continue
         music_mission_nodes.append(
             E.music_mission(
                 E.chart_id(chart_id, __type="s32"),
-                E.achievements(_safe_int(mission.get("achievements", 0), 0), __type="s32"),
+                E.achievements(safe_int(mission.get("achievements", 0), 0), __type="s32"),
             )
         )
 
     pa_skill_children = [
         E.pa_skill_history(
             *[
-                E.data(_safe_int(value, 0), __type="s64")
+                E.data(safe_int(value, 0), __type="s64")
                 for value in (pa_skill_data.get("pa_skill_history") or [])
             ]
         ),
-        E.pa_skill_history_index(_safe_int(pa_skill_data.get("pa_skill_history_index", 0), 0), __type="s32"),
-        E.skill(_safe_int(pa_skill_data.get("skill", 0), 0), __type="s32"),
+        E.pa_skill_history_index(safe_int(pa_skill_data.get("pa_skill_history_index", 0), 0), __type="s32"),
+        E.skill(safe_int(pa_skill_data.get("skill", 0), 0), __type="s32"),
     ]
     pa_skill_chart_nodes = []
     for chart in pa_skill_data.get("charts") or []:
@@ -338,10 +248,10 @@ def _build_profile_data_node(p, node_factory=E.usr):
             continue
         pa_skill_chart_nodes.append(
             E.chart(
-                E.rank(_safe_int(chart.get("rank", 0), 0), __type="s32"),
-                E.music_id(_safe_int(chart.get("music_id", 0), 0), __type="s32"),
-                E.chart_difficulty_type(_safe_int(chart.get("chart_difficulty_type", 0), 0), __type="s32"),
-                E.skill(_safe_int(chart.get("skill", 0), 0), __type="s32"),
+                E.rank(safe_int(chart.get("rank", 0), 0), __type="s32"),
+                E.music_id(safe_int(chart.get("music_id", 0), 0), __type="s32"),
+                E.chart_difficulty_type(safe_int(chart.get("chart_difficulty_type", 0), 0), __type="s32"),
+                E.skill(safe_int(chart.get("skill", 0), 0), __type="s32"),
             )
         )
     if pa_skill_chart_nodes:
@@ -349,7 +259,7 @@ def _build_profile_data_node(p, node_factory=E.usr):
 
     character_nodes = []
     for item in p.get("characters", []) or []:
-        entry = _normalize_usr_character_entry(item)
+        entry = player.normalize_usr_character_entry(item)
         if entry is None:
             continue
         character_nodes.append(
@@ -371,17 +281,17 @@ def _build_profile_data_node(p, node_factory=E.usr):
             E.card(
                 E.index(str(card.get("index") or ""), __type="str"),
                 E.item_id(str(card.get("item_id") or ""), __type="str"),
-                E.card_limit_over_count(_safe_int(card.get("card_limit_over_count"), 0), __type="s32"),
-                E.character_card_exp(_safe_int(card.get("character_card_exp"), 0), __type="s32"),
-                E.character_card_skill_exp(_safe_int(card.get("character_card_skill_exp"), 0), __type="s32"),
+                E.card_limit_over_count(safe_int(card.get("card_limit_over_count"), 0), __type="s32"),
+                E.character_card_exp(safe_int(card.get("character_card_exp"), 0), __type="s32"),
+                E.character_card_skill_exp(safe_int(card.get("character_card_skill_exp"), 0), __type="s32"),
                 E.additional_skills(*[
                     E.skill_id(str(skill_id), __type="str")
                     for skill_id in additional_skills
                 ]),
-                E.is_favorite(bool(_safe_bool(card.get("is_favorite", False))), __type="bool"),
-                E.source(_safe_int(card.get("source"), 0), __type="s32"),
+                E.is_favorite(bool(safe_bool(card.get("is_favorite", False))), __type="bool"),
+                E.source(safe_int(card.get("source"), 0), __type="s32"),
                 E.deleted(False, __type="bool"),
-                E.created_at(str(card.get("created_at") or _now_date_string()), __type="str"),
+                E.created_at(str(card.get("created_at") or now_date_string()), __type="str"),
             )
         )
 
@@ -409,7 +319,7 @@ def _build_profile_data_node(p, node_factory=E.usr):
             continue
         deck_nodes.append(
             E.deck(
-                E.deck_number(_safe_int(saved_deck.get("deck_number", 1), 1), __type="s32"),
+                E.deck_number(safe_int(saved_deck.get("deck_number", 1), 1), __type="s32"),
                 E.is_main(deck_bool(saved_deck.get("is_main")), __type="bool"),
                 E.is_select(deck_bool(saved_deck.get("is_select")), __type="bool"),
                 E.deck_name(saved_deck.get("deck_name") or "", __type="str"),
@@ -554,7 +464,7 @@ def _build_profile_data_node(p, node_factory=E.usr):
             *[
                 E.action_count(
                     E.key(str(k), __type="str"),
-                    E.count(_safe_int(v, 0), __type="s32"),
+                    E.count(safe_int(v, 0), __type="s32"),
                 )
                 for k, v in action_counts.items()
                 if k is not None and str(k) != ""
@@ -569,7 +479,7 @@ async def polaris_usr_get(request: Request):
         root = request_info["root"]
         dataid, refid, _, _ = _extract_usr_identity(root)
 
-        p = get_profile(dataid, refid)
+        p = player.get_profile(dataid, refid)
 
         if not p or not p.get("name"):
             print(f"polaris_usr_get: Profile NOT found for card={dataid} refid={refid}")
@@ -603,12 +513,11 @@ async def polaris_usr_save(request: Request):
         print(f"polaris_usr_save: Failed to get usr_id: {e}")
         return Response(status_code=400)
 
-    db = get_db().table("polaris_profile")
-    profile = db.get(where("usr_id") == usr_id)
+    profile = player.get_profile(usr_id=usr_id)
 
     if profile:
         print(f"polaris_usr_save: Profile found for usr_id={usr_id}")
-        profile["mira"] = max(0, _safe_int(profile["mira"], 0))
+        profile["mira"] = max(0, safe_int(profile["mira"], 0))
 
         # Helper to extract text safely
         def get_text(node, tag, default=""):
@@ -783,48 +692,8 @@ async def polaris_usr_save(request: Request):
                     current_unlocks[mid] = entry
 
         # --- Update Items ---
-        usr_item_change_log = root.find("usr_item_change_log")
-        if usr_item_change_log is not None:
-            profile.setdefault("items", {})
-            if not isinstance(profile["items"], dict):
-                profile["items"] = {}
-            for item in usr_item_change_log.findall("item"):
-                item_id = str(get_text(item, "item_id") or "").strip()
-                if not item_id:
-                    continue
-                change_count = get_int(item, "change_count")
-                if item_id == "money.mira":
-                    profile["mira"] = max(
-                        0,
-                        _safe_int(profile["mira"], 0) + change_count,
-                    )
-                    continue
-                current_count = _safe_int(profile["items"].get(item_id, 0), 0)
-                next_count = max(0, current_count + change_count)
-                if next_count > 0:
-                    profile["items"][item_id] = next_count
-                else:
-                    profile["items"].pop(item_id, None)
-
-        usr_item = root.find("usr_item")
-        if usr_item is not None:
-            profile.setdefault("items", {})
-            if not isinstance(profile["items"], dict):
-                profile["items"] = {}
-            for item in usr_item.findall("item"):
-                item_id = str(get_text(item, "item_id") or "").strip()
-                if not item_id:
-                    continue
-                count = max(0, get_int(item, "count"))
-                if item_id == "money.mira":
-                    profile["mira"] = count
-                    continue
-                if item_id.startswith("chart."):
-                    continue
-                if count > 0:
-                    profile["items"][item_id] = count
-                else:
-                    profile["items"].pop(item_id, None)
+        player.apply_item_change_log(profile, root.find("usr_item_change_log"), get_text, get_int)
+        player.apply_item_snapshot(profile, root.find("usr_item"), get_text, get_int)
 
         usr_name_titles = root.find("usr_name_titles")
         if usr_name_titles is not None:
@@ -849,7 +718,7 @@ async def polaris_usr_save(request: Request):
         if usr_character is not None and len(usr_character) > 0:
             characters = []
             for character in usr_character.findall("chara"):
-                entry = _normalize_usr_character_entry({
+                entry = player.normalize_usr_character_entry({
                     "chara_id": character.findtext("chara_id"),
                     "closeness": character.findtext("closeness"),
                     "home_touch_count": character.findtext("home_touch_count"),
@@ -871,7 +740,7 @@ async def polaris_usr_save(request: Request):
             for card in usr_character_card.findall("card"):
                 index = str(card.findtext("index") or "").strip()
                 deleted = card.findtext("deleted")
-                if _safe_bool(deleted):
+                if safe_bool(deleted):
                     continue
                 incoming_cards.append({
                     "index": index,
@@ -911,7 +780,7 @@ async def polaris_usr_save(request: Request):
         if pa_skill is not None:
             skill_data = {
                 "pa_skill_history": [
-                    _safe_int(data.text, 0)
+                    safe_int(data.text, 0)
                     for data in pa_skill.findall("./pa_skill_history/data")
                     if data.text
                 ],
@@ -946,7 +815,7 @@ async def polaris_usr_save(request: Request):
                     "change_count": count,
                 })
 
-                cur = _safe_int(profile["action_counts"].get(key, 0), 0)
+                cur = safe_int(profile["action_counts"].get(key, 0), 0)
                 profile["action_counts"][key] = cur + count
 
                 # SPECIAL: game_play_count mapping
@@ -957,7 +826,7 @@ async def polaris_usr_save(request: Request):
                     # If client sent snapshot 0 but log +1, we trust the log?
                     # But client snapshot should be correct next time if we save generic count.
                     pass
-            _append_unique_entries(profile["action_logs"], new_action_logs)
+            player.append_unique_entries(profile["action_logs"], new_action_logs)
 
         usr_max_action_count = root.find("usr_max_action_count")
         if usr_max_action_count is not None:
@@ -968,7 +837,7 @@ async def polaris_usr_save(request: Request):
                     continue
                 count = get_int(action_count, "count")
                 profile["action_counts"][key] = max(
-                    _safe_int(profile["action_counts"].get(key, 0), 0),
+                    safe_int(profile["action_counts"].get(key, 0), 0),
                     count,
                 )
 
@@ -985,7 +854,7 @@ async def polaris_usr_save(request: Request):
                     except: pass
 
         # --- PERSIST TO DB ---
-        db.upsert(profile, where("usr_id") == usr_id)
+        player.save_profile(profile)
         print(f"polaris_usr_save: Profile SAVED to DB for usr_id={usr_id}")
 
     else:
@@ -1095,9 +964,9 @@ async def polaris_usr_save_musicscore(request: Request):
                 inputs = []
                 for input_node in log.findall("./inputs/input"):
                     inputs.append({
-                        "note_type": _safe_int(input_node.findtext("note_type"), 0),
-                        "judge_type": _safe_int(input_node.findtext("judge_type"), 0),
-                        "count": _safe_int(input_node.findtext("count"), 0),
+                        "note_type": safe_int(input_node.findtext("note_type"), 0),
+                        "judge_type": safe_int(input_node.findtext("judge_type"), 0),
+                        "count": safe_int(input_node.findtext("count"), 0),
                     })
 
                 cards = []
@@ -1105,16 +974,16 @@ async def polaris_usr_save_musicscore(request: Request):
                     card_data = {
                         "index": card_node.findtext("index") or "",
                         "item_id": card_node.findtext("item_id") or "",
-                        "power": _safe_int(card_node.findtext("power"), 0),
-                        "level": _safe_int(card_node.findtext("level"), 0),
-                        "skill_level": _safe_int(card_node.findtext("skill_level"), 0),
-                        "rank": _safe_int(card_node.findtext("rank"), 0),
+                        "power": safe_int(card_node.findtext("power"), 0),
+                        "level": safe_int(card_node.findtext("level"), 0),
+                        "skill_level": safe_int(card_node.findtext("skill_level"), 0),
+                        "rank": safe_int(card_node.findtext("rank"), 0),
                         "skills": [
                             str(skill.text)
                             for skill in card_node.findall("./skills/skill")
                             if skill.text is not None
                         ],
-                        "triggered": _safe_int(card_node.findtext("triggered"), 0),
+                        "triggered": safe_int(card_node.findtext("triggered"), 0),
                     }
                     cards.append(card_data)
 
