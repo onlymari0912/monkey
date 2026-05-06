@@ -128,15 +128,6 @@ async def services_get(
     services = {}
 
     for service in modules.routers:
-        model_blacklist = services.get("model_blacklist", [])
-        model_whitelist = services.get("model_whitelist", [])
-
-        if request_info["model"] in model_blacklist:
-            continue
-
-        if model_whitelist and request_info["model"] not in model_whitelist:
-            continue
-
         if (
             service.tags
             and service.tags[0].startswith("api_")

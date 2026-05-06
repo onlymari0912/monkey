@@ -24,7 +24,6 @@ def _add_val_as_str(elm, val):
 def _add_bool_as_str(elm, val):
     return _add_val_as_str(elm, 1 if val else 0)
 
-
 def _add_list_as_str(elm, vals):
     new_val = " ".join([str(val) for val in vals])
 
@@ -35,7 +34,6 @@ def _add_list_as_str(elm, vals):
     else:
         return new_val
 
-
 def _prng():
     state = 0x41C64E6D
     while True:
@@ -44,9 +42,9 @@ def _prng():
         # state = (state * 0x41C64E6D + 0x3039)
         state = (state * 0xC2A29A69 + 0xD3DC167E) & 0xFFFFFFFF
         yield (x & 0x7FFF0000) | state >> 0xF & 0xFFFF
+
 prng_init = _prng()
 HTTP_TRACE_LOG_DIR = Path("logs") / "http_trace"
-
 
 E = ElementMaker(
     typemap={
@@ -59,7 +57,6 @@ E = ElementMaker(
 
 def _format_http_headers(headers):
     return "\n".join(f"{k}: {v}" for k, v in headers.items())
-
 
 def _sanitize_log_part(value):
     safe = "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in str(value or "unknown"))
@@ -75,90 +72,6 @@ def _append_http_log(request, body):
         if not body.endswith("\n"):
             log_file.write("\n")
         log_file.write("\n")
-
-
-async def core_get_game_version_from_software_version(software_version):
-    _, model, dest, spec, rev, ext = software_version
-    ext = int(ext)
-
-    if model == "LDJ":
-        if ext >= 2025091700:
-            return 33
-        elif ext >= 2024100900:
-            return 32
-        elif ext >= 2023101800:
-            return 31
-        elif ext >= 2022101700:
-            return 30
-        elif ext >= 2021101300:
-            return 29
-        # TODO: Consolidate IIDX modules to easily support versions 21-28 (probably never)
-        elif ext >= 2020102800:
-            return 28
-        elif ext >= 2019101600:
-            return 27
-        elif ext >= 2018110700:
-            return 26
-        elif ext >= 2017122100:
-            return 25
-        elif ext >= 2016102400:
-            return 24
-        elif ext >= 2015111100:
-            return 23
-        elif ext >= 2014091700:
-            return 22
-        elif ext >= 2013100200:
-            return 21
-        elif ext >= 2012010100:
-            return 20
-    elif model == "KDZ":
-        return 19
-    elif model == "JDZ":
-        return 18
-
-    elif model == "M32":
-        if ext >= 2024031300:
-            return 10
-        elif ext >= 2022121400:
-            return 9
-        elif ext >= 2021042100:
-            return 8
-        elif ext >= 2019100200:
-            return 7
-        elif ext >= 2018072700:
-            return 6
-        # TODO: Support versions 1-5 (never)
-        elif ext >= 2017090600:
-            return 5
-        elif ext >= 2017011800:
-            return 4
-        elif ext >= 2015042100:
-            return 3
-        elif ext >= 2014021400:
-            return 2
-        elif ext >= 2013012400:
-            return 1
-
-    elif model == "MDX":
-        if ext >= 2019022600:  # ???
-            return 19
-
-    elif model == "KFC":
-        if ext >= 2020090402:  # ???
-            return 6
-
-    elif model == "REC":
-        return 1
-
-    elif model == "XIF":
-        return 1
-
-    # TODO: ???
-    # elif model == "PAN":
-    #     return 0
-
-    else:
-        return 0
 
 async def core_process_request(request):
     cached_request_info = getattr(request.state, "core_request_info", None)
@@ -199,7 +112,6 @@ async def core_process_request(request):
     module = root[0].tag
     method = root[0].attrib["method"] if "method" in root[0].attrib else None
     command = root[0].attrib["command"] if "command" in root[0].attrib else None
-    game_version = await core_get_game_version_from_software_version(model_parts)
 
     request_info = {
         "root": root,
@@ -212,7 +124,7 @@ async def core_process_request(request):
         "spec": model_parts[3],
         "rev": model_parts[4],
         "ext": model_parts[5],
-        "game_version": game_version,
+        "game_version": 1,
     }
     request.state.core_request_info = request_info
 

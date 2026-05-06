@@ -9,7 +9,6 @@ import json
 import time
 
 router = APIRouter(prefix="/polaris/usr", tags=["usr"])
-router.model_whitelist = ["LAV", "XIF"]
 
 with (Path(__file__).resolve().parent / "data" / "music.json").open(encoding="utf-8") as fp:
     MUSIC_CHARTS = tuple(

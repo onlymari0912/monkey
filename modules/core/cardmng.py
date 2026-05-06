@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Request, Response
-from tinydb import Query, where
+from tinydb import where
 
 from core_common import core_process_request, core_prepare_response, E
 from core_database import get_db
@@ -12,26 +12,8 @@ def to_refid(cid):
     return str(int(cid, 16)).zfill(16)[-16:]
 
 
-def get_target_table(game_id):
-    target_table = {
-        "LDJ": "iidx_profile",
-        "MDX": "ddr_profile",
-        "KFC": "sdvx_profile",
-        "M32": "gitadora_profile",
-        "PAN": "nostalgia_profile",
-        "REC": "dancerush_profile",
-        "JDZ": "iidx_profile",
-        "KDZ": "iidx_profile",
-        "LAV": "polaris_profile",
-        "XIF": "polaris_profile",
-    }
-
-    return target_table[game_id]
-
-
-def get_profile(game_id, cid):
-    target_table = get_target_table(game_id)
-    profile = get_db().table(target_table).get(where("card") == cid)
+def get_profile(cid):
+    profile = get_db().table("polaris_profile").get(where("card") == cid)
 
     if profile is None:
         profile = {
@@ -42,13 +24,12 @@ def get_profile(game_id, cid):
     return profile
 
 
-def get_profile_by_refid(game_id, refid):
-    target_table = get_target_table(game_id)
-    return get_db().table(target_table).get(where("refid") == refid)
+def get_profile_by_refid(refid):
+    return get_db().table("polaris_profile").get(where("refid") == refid)
 
 
-def get_game_profile(game_id, game_version, cid):
-    profile = get_profile(game_id, cid)
+def get_game_profile(game_version, cid):
+    profile = get_profile(cid)
 
     if str(game_version) not in profile["version"]:
         profile["version"][str(game_version)] = {}
@@ -56,15 +37,14 @@ def get_game_profile(game_id, game_version, cid):
     return profile["version"][str(game_version)]
 
 
-def create_profile(game_id, game_version, cid, pin, refid=None):
-    target_table = get_target_table(game_id)
-    profile = get_profile(game_id, cid)
+def create_profile(cid, pin, refid=None):
+    profile = get_profile(cid)
 
     profile["pin"] = pin
     if refid:
         profile["refid"] = refid
 
-    get_db().table(target_table).upsert(profile, where("card") == cid)
+    get_db().table("polaris_profile").upsert(profile, where("card") == cid)
 
 
 @router.post("/{gameinfo}/cardmng/authpass")
@@ -74,7 +54,7 @@ async def cardmng_authpass(request: Request):
     refid = request_info["root"][0].attrib["refid"]
     passwd = request_info["root"][0].attrib["pass"]
 
-    profile = get_profile_by_refid(request_info["model"], refid)
+    profile = get_profile_by_refid(refid)
     if profile is None or passwd != profile.get("pin", None):
         status = 116
     else:
@@ -104,7 +84,7 @@ async def cardmng_getrefid(request: Request):
     passwd = request_info["root"][0].attrib["passwd"]
     refid = to_refid(cid)
 
-    create_profile(request_info["model"], request_info["game_version"], cid, passwd, refid=refid)
+    create_profile(cid, passwd, refid=refid)
 
     response = E.response(
         E.cardmng(
@@ -124,7 +104,7 @@ async def cardmng_inquire(request: Request):
 
     cid = request_info["root"][0].attrib["cardid"].strip() # Validate/Strip
 
-    profile = get_profile(request_info["model"], cid)
+    profile = get_profile(cid)
     
     # Check if this is a registered card (has pin or dataid) AND has user profile (name or usr_id)
     # This prevents 'Card Registered but User Unregistered' state which confuses some games (like Polaris)

@@ -9,7 +9,6 @@ import time
 import uuid
 
 router = APIRouter(prefix="/polaris/gacha", tags=["gacha"])
-router.model_whitelist = ["LAV", "XIF"]
 
 DATA_DIR = Path(__file__).resolve().parent / "data"
 CHARACTER_DATA_PATH = DATA_DIR / "character.json"

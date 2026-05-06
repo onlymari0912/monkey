@@ -63,7 +63,7 @@ async def eacoin_consume(request: Request):
 
     cardid = payments.get(sessid, None)
 
-    # fallback if server is restarted mid-round for IIDX movie or gacha purchases
+    # fallback if server is restarted mid-round for purchases
     if cardid == None:
         response = E.response(
             E.eacoin(

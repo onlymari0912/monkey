@@ -3,7 +3,6 @@ from core_common import core_process_request, core_prepare_response, E
 import time
 
 router = APIRouter(prefix="/polaris/mst", tags=["mst"])
-router.model_whitelist = ["LAV", "XIF"]
 
 SHOP_TEST_EVENT_IDS = (
     "shop.00000",
