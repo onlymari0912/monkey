@@ -5,3 +5,8 @@
 .venv/
 webui/
 Scripts/
+/.tools
+/tools
+/logs
+/decompiled
+/client_assets
