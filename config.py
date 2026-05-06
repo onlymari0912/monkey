@@ -17,8 +17,9 @@ def get_ip():
 ip = get_ip()
 port = 8000
 response_compression = False
-verbose_log = True
 
 arcade = "Ｍ０ＮＫＹＢＵＳ１Ｎ３Ｚ"
 paseli = 10000
+http_trace = True
+verbose_log = False
 maintenance_mode = False

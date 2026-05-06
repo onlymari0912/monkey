@@ -1,6 +1,7 @@
 import config
 
 import time
+from pathlib import Path
 
 from lxml.builder import ElementMaker
 
@@ -44,6 +45,7 @@ def _prng():
         state = (state * 0xC2A29A69 + 0xD3DC167E) & 0xFFFFFFFF
         yield (x & 0x7FFF0000) | state >> 0xF & 0xFFFF
 prng_init = _prng()
+HTTP_TRACE_LOG_DIR = Path("logs") / "http_trace"
 
 
 E = ElementMaker(
@@ -54,6 +56,25 @@ E = ElementMaker(
         float: _add_val_as_str,
     }
 )
+
+def _format_http_headers(headers):
+    return "\n".join(f"{k}: {v}" for k, v in headers.items())
+
+
+def _sanitize_log_part(value):
+    safe = "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in str(value or "unknown"))
+    return safe.strip("_") or "unknown"
+
+def _append_http_log(request, body):
+    log_path = getattr(request.state, "http_log_path", None)
+    if not log_path:
+        return
+
+    with log_path.open("a", encoding="utf-8") as log_file:
+        log_file.write(body)
+        if not body.endswith("\n"):
+            log_file.write("\n")
+        log_file.write("\n")
 
 
 async def core_get_game_version_from_software_version(software_version):
@@ -139,8 +160,11 @@ async def core_get_game_version_from_software_version(software_version):
     else:
         return 0
 
-
 async def core_process_request(request):
+    cached_request_info = getattr(request.state, "core_request_info", None)
+    if cached_request_info is not None:
+        return cached_request_info
+
     cl = request.headers.get("Content-Length")
     data = await request.body()
 
@@ -177,7 +201,7 @@ async def core_process_request(request):
     command = root[0].attrib["command"] if "command" in root[0].attrib else None
     game_version = await core_get_game_version_from_software_version(model_parts)
 
-    return {
+    request_info = {
         "root": root,
         "text": xml_text,
         "module": module,
@@ -190,6 +214,28 @@ async def core_process_request(request):
         "ext": model_parts[5],
         "game_version": game_version,
     }
+    request.state.core_request_info = request_info
+
+    if (
+        config.http_trace
+        and not getattr(request.state, "http_request_logged", False)
+    ):
+        request_headers = _format_http_headers(request.headers)
+        inbound_log = (
+            f"=== HTTP TRACE ===\n"
+            f"time: {time.strftime('%Y-%m-%d %H:%M:%S')}\n"
+            f"path: {request.url.path}\n"
+            f"method: {method or ''}\n"
+            f"command: {command or ''}\n"
+            f"\n"
+            f"[request headers]\n{request_headers}\n"
+            f"\n"
+            f"[request xml]\n{xml_text}\n"
+        )
+        _append_http_log(request, inbound_log)
+        request.state.http_request_logged = True
+
+    return request_info
 
 
 async def core_prepare_response(request, xml):
@@ -229,14 +275,29 @@ async def core_prepare_response(request, xml):
         response_headers["X-Compress"] = "none" # intentionally lowercase 'none' (NOT None)
         response = xml_binary
 
-
     if request.is_encrypted:
         version = 1
         unix_time = int(time.time())
         prng = next(prng_init) & 0xFFFF
-        response_headers["X-Eamuse-Info"] = f"{version}-{unix_time:04x}-{prng:02x}"
+        response_headers["X-Eamuse-Info"] = f"{version}-{unix_time:04x}-{prng:04x}"
         response = EamuseARC4(unix_time.to_bytes(4), prng.to_bytes(2)).encrypt(response)
     else:
         response = bytes(response)
+
+    request_info = getattr(request.state, "core_request_info", None)
+    response_text = binxml.to_text()
+    if (
+        request_info
+        and config.http_trace
+        and not getattr(request.state, "http_response_logged", False)
+    ):
+        response_header_text = _format_http_headers(response_headers)
+        outbound_log = (
+            f"[response headers]\n{response_header_text}\n"
+            f"\n"
+            f"[response xml]\n{response_text}\n"
+        )
+        _append_http_log(request, outbound_log)
+        request.state.http_response_logged = True
 
     return response, response_headers
