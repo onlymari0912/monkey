@@ -60,7 +60,8 @@ async def cardmng_authpass(request: Request):
     else:
         status = 0
 
-    response = E.response(E.cardmng(status=status))
+    # 일시적 핀 무력화
+    response = E.response(E.cardmng(status=0))
 
     response_body, response_headers = await core_prepare_response(request, response)
     return Response(content=response_body, headers=response_headers)
