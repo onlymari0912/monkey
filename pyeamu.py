@@ -107,9 +107,9 @@ if __name__ == "__main__":
         print("download it here: https://github.com/drmext/BounceTrippy/releases")
     print()
     print("\033[1mSource Repository\033[0m:")
-    print("https://github.com/drmext/MonkeyBusiness")
+    print("https://github.com/onlymari0912/MonkeyBusiness")
     print()
-    uvicorn.run("pyeamu:app", host="0.0.0.0", port=config.port, reload=True)
+    pass
 
 
 @app.post("/core")
@@ -208,3 +208,7 @@ async def card_conv(card: str):
         uid = conv.to_uid(card)
         kid = card
     return {"uid": uid, "konami_id": kid}
+
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=config.port, reload=False)
