@@ -1,16 +1,15 @@
 from importlib import util
 from os import path
 from glob import glob
-
 from fastapi import APIRouter, Request, Response
 from typing import Optional
 
 routers = []
-for module_path in sorted(
+for module_path in [
     f
     for f in glob(path.join(path.dirname(__file__), "**/*.py"), recursive=True)
     if path.basename(f) != "__init__.py"
-):
+]:
     spec = util.spec_from_file_location("", module_path)
     module = util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -52,7 +51,7 @@ async def forward_slashless(
             if request.url.path == "/fwdr":
                  print(f"FWDR DEBUG: Target globals key expected: '{target_key}'")
                  print(f"FWDR DEBUG: Key in globals: {target_key in globals()}")
-            
+
             print("Try URL Slash 1 (On).")
             return Response(status_code=404)
 
