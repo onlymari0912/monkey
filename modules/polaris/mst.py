@@ -4,7 +4,8 @@ import time
 
 router = APIRouter(prefix="/polaris/mst", tags=["mst"])
 
-SHOP_TEST_EVENT_IDS = (
+COMMON_EVENT_IDS = (
+    "feature.storyselect",
     "shop.00000",
     # "shop.00001",
     # "shop.00002",
@@ -67,7 +68,7 @@ async def polaris_mst_get_common(request: Request):
                         E.open_at("2026-01-01 00:00:00", __type="str"),
                         E.close_at("2040-12-31 14:59:59", __type="str"),
                     )
-                    for event_id in SHOP_TEST_EVENT_IDS
+                    for event_id in COMMON_EVENT_IDS
                 ]
             ),
             E.mst_patch(
