@@ -127,6 +127,11 @@ async def core_process_request(request):
         "game_version": 1,
     }
     request.state.core_request_info = request_info
+    if config.http_trace and not getattr(request.state, "http_log_path", None):
+        HTTP_TRACE_LOG_DIR.mkdir(parents=True, exist_ok=True)
+        module_part = _sanitize_log_part(module)
+        method_part = _sanitize_log_part(method or command or request.url.path)
+        request.state.http_log_path = HTTP_TRACE_LOG_DIR / f"{module_part}_{method_part}.log"
 
     if (
         config.http_trace
