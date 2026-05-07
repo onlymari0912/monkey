@@ -6,7 +6,6 @@ from core_database import get_db
 
 router = APIRouter(prefix="/core", tags=["cardmng"])
 
-
 def to_refid(cid):
     # Generate a deterministic 16-digit numeric ID from the hex card ID
     return str(int(cid, 16)).zfill(16)[-16:]
@@ -22,19 +21,6 @@ def get_profile(cid):
         }
 
     return profile
-
-
-def get_profile_by_refid(refid):
-    return get_db().table("polaris_profile").get(where("refid") == refid)
-
-
-def get_game_profile(game_version, cid):
-    profile = get_profile(cid)
-
-    if str(game_version) not in profile["version"]:
-        profile["version"][str(game_version)] = {}
-
-    return profile["version"][str(game_version)]
 
 
 def create_profile(cid, pin, refid=None):
@@ -54,7 +40,7 @@ async def cardmng_authpass(request: Request):
     refid = request_info["root"][0].attrib["refid"]
     passwd = request_info["root"][0].attrib["pass"]
 
-    profile = get_profile_by_refid(refid)
+    profile = get_db().table("polaris_profile").get(where("refid") == refid)
     if profile is None or passwd != profile.get("pin", None):
         status = 116
     else:
@@ -106,10 +92,8 @@ async def cardmng_inquire(request: Request):
     cid = request_info["root"][0].attrib["cardid"].strip() # Validate/Strip
 
     profile = get_profile(cid)
-    
-    # Check if this is a registered card (has pin or dataid) AND has user profile (name or usr_id)
-    # This prevents 'Card Registered but User Unregistered' state which confuses some games (like Polaris)
-    is_registered = ("pin" in profile or "dataid" in profile) and ("name" in profile or "usr_id" in profile)
+
+    is_registered = "pin" in profile and ("name" in profile or "usr_id" in profile)
 
     if is_registered:
         binded = 1
