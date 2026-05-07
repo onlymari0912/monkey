@@ -1,8 +1,9 @@
-from fastapi import APIRouter, Request, Response
+﻿from fastapi import APIRouter, Request, Response
 from datetime import datetime, timezone
 from core_common import core_process_request, core_prepare_response, E
 from core_database import get_db
 from modules.polaris import player
+from modules.polaris.utils import now_date_string, safe_bool, safe_int
 from pathlib import Path
 from tinydb import where
 import json
@@ -66,23 +67,6 @@ def _extract_usr_identity(root):
 def _ensure_signup_profile(profile, dataid, refid, name, pin=""):
     return player.ensure_signup_profile(profile, dataid, refid, name, pin)
 
-def safe_int(value, default=0):
-    try:
-        return int(value)
-    except Exception:
-        return default
-
-def safe_bool(value):
-    if str(value).lower() == "true":
-        return 1
-    try:
-        return 1 if int(value or 0) else 0
-    except Exception:
-        return 0
-
-def now_date_string():
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-
 async def polaris_usr_sign_up(request: Request):
     try:
         request_info = await core_process_request(request)
@@ -127,15 +111,9 @@ def _build_profile_data_node(p, node_factory=E.usr):
     # Client needs tutorial_skipped=1 if cleared, but never sends it. Explicitly sync.
     # Also sync Gacha Ticket as it often signals tutorial completion.
 
-    def safe_bool(k):
-        val = p.get(k)
-        if str(val).lower() == "true": return 1
-        try: return 1 if int(val or 0) else 0
-        except: return 0
-
-    p_cleared = safe_bool("is_tutorial_cleared")
-    p_skipped = safe_bool("tutorial_skipped")
-    p_gacha = safe_bool("gacha_ticket_received")
+    p_cleared = safe_bool(p.get("is_tutorial_cleared"))
+    p_skipped = safe_bool(p.get("tutorial_skipped"))
+    p_gacha = safe_bool(p.get("gacha_ticket_received"))
 
     is_cleared = 1 if (p_cleared or p_gacha) else 0
 
