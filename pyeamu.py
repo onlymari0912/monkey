@@ -121,26 +121,22 @@ async def services_get(
     module: Optional[str] = None,
     method: Optional[str] = None,
 ):
-    request_info = await core_process_request(request)
+    await core_process_request(request)
 
-    request_address = f"{urlparse(str(request.url)).netloc}:{config.port}"
+    request_url = urlparse(str(request.url))
+    request_address = request_url.netloc
+    if request_url.port is None:
+        request_address = f"{request_url.hostname or request_url.netloc}:{config.port}"
 
     services = {}
-
     for service in modules.routers:
-        if (
-            service.tags
-            and service.tags[0].startswith("api_")
-            or service.tags[0] == "slashless_forwarder"
-        ):
+        k = (service.tags[0] if service.tags else service.prefix).strip("/")
+        if k.startswith("api_") or k == "slashless_forwarder":
             continue
 
-        k = (service.tags[0] if service.tags else service.prefix).strip("/")
         if f == "services.get" or module == "services" and method == "get":
-            # url_slash 0
             pre = "/fwdr"
         else:
-            # url_slash 1
             pre = service.prefix
         if k not in services:
             services[k] = urlunparse(("http", request_address, pre, None, None, None))
