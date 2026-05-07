@@ -1,17 +1,18 @@
+import csv
+import json
+import random
+import time
+import uuid
 from fastapi import APIRouter, Request, Response
 from core_common import core_process_request, core_prepare_response, E
 from modules.polaris import player
 from modules.polaris import usr as polaris_usr
 from pathlib import Path
-import json
-import random
-import time
-import uuid
 
 router = APIRouter(prefix="/polaris/gacha", tags=["gacha"])
 
 DATA_DIR = Path(__file__).resolve().parent / "data"
-CHARACTER_DATA_PATH = DATA_DIR / "character.json"
+CARDS_DATA_PATH = DATA_DIR / "cards.csv"
 GACHA_OPTIONS_PATH = DATA_DIR / "gacha_options.json"
 GACHA_CONTENT_TYPE_FILES = (
     ("Contenter", DATA_DIR / "gacha_contenter.json"),
@@ -48,14 +49,21 @@ GACHA_PAYMENT_TYPE_FLAGS = {
     "item": 8,
 }
 
-with CHARACTER_DATA_PATH.open("r", encoding="utf-8") as f:
-    CHARACTER_CARDS = tuple(
-        dict(entry, type=card_type)
-        for card_type, entries in json.load(f).items()
-        if isinstance(entries, list)
-        for entry in entries
-        if isinstance(entry, dict)
-    )
+def _load_cards():
+    with CARDS_DATA_PATH.open("r", encoding="utf-8-sig", newline="") as f:
+        return tuple(
+            {
+                "card_id": row["Id"],
+                "name": row["Name"],
+                "name_kr": row["NameKr"],
+                "card_name": row["CardName"],
+                "rarity": row["Rarity"],
+                "type": row["Type"],
+            }
+            for row in csv.DictReader(f)
+        )
+
+CHARACTER_CARDS = _load_cards()
 CHARACTER_CARD_BY_ID = {
     card["card_id"]: card
     for card in CHARACTER_CARDS
