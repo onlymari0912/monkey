@@ -80,7 +80,7 @@ async def polaris_usr_sign_up(request: Request):
         print(f"polaris_usr_sign_up: Processing signup for card='{dataid}' name='{name}'")
 
         profile = _ensure_signup_profile(player.get_profile(dataid, refid), dataid, refid, name, pin)
-        player.save_profile(profile, fallback_card=dataid)
+        player.save_profile(profile)
         print(f"polaris_usr_sign_up: Saved. usr_id={profile['usr_id']}")
 
         # Response (Matches SignUpModeler.cs)

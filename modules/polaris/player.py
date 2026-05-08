@@ -30,18 +30,15 @@ def get_profile(dataid=None, refid=None, usr_id=None):
     return None
 
 
-def save_profile(profile, fallback_card=None):
+def save_profile(profile):
     if not profile:
         return None
 
     db = get_db().table("polaris_profile")
-    profile_doc_id = getattr(profile, "doc_id", None)
-    if profile_doc_id is not None:
-        db.update(dict(profile), doc_ids=[profile_doc_id])
-    elif safe_int(profile.get("usr_id"), 0) > 0:
+    if safe_int(profile.get("usr_id"), 0) > 0:
         db.upsert(profile, where("usr_id") == profile["usr_id"])
     else:
-        db.upsert(profile, where("card") == (fallback_card or profile.get("card")))
+        db.upsert(profile, where("card") == profile.get("card"))
     return profile
 
 
