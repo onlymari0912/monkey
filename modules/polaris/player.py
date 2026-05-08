@@ -1,17 +1,10 @@
 from core_database import get_db
-from datetime import datetime, timezone
+from modules.polaris.utils import now_date_string, safe_int
 from tinydb import where
 import random
 import uuid
 
 ITEM_CHANGE_LOG_HISTORY_LIMIT = 200
-
-
-def safe_int(value, default=0):
-    try:
-        return int(value)
-    except Exception:
-        return default
 
 def get_profile(dataid=None, refid=None, usr_id=None):
     db = get_db().table("polaris_profile")
@@ -124,9 +117,6 @@ def normalize_usr_character_entry(entry):
         "closeness": safe_int(entry.get("closeness", 0), 0),
         "home_touch_count": safe_int(entry.get("home_touch_count", 0), 0),
     }
-
-def now_date_string():
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 def _ensure_item_state(profile):
     profile.setdefault("items", {})
